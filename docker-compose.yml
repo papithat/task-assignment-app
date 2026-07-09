@@ -1,0 +1,72 @@
+version: "3.9"
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: task_assignment_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: task_assignment
+    secrets:
+      - postgres_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: task_assignment_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: task_assignment
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      # Optional: populate secrets/gemini_api_key.txt to enable real LLM skill
+      # classification. If the file is empty, a keyword-based fallback classifier
+      # is used instead.
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      GEMINI_MODEL: "gemini-1.5-flash"
+    secrets:
+      - postgres_password
+      - gemini_api_key
+    ports:
+      - "4000:4000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Vite env vars are baked in at build time, so this must be a build arg,
+        # not a runtime environment variable. It should point to wherever the
+        # backend is reachable from the *browser* (not from inside the container).
+        VITE_API_BASE_URL: "http://localhost:4000/api"
+    container_name: task_assignment_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
